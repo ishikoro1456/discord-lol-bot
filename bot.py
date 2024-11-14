@@ -5,7 +5,7 @@ import random
 import os
 from datetime import datetime, timedelta
 
-TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+TOKEN = os.getenv('TOKEN')
 
 if TOKEN is None:
     raise ValueError("DISCORD_BOT_TOKENが設定されていません。")
