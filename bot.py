@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
+if TOKEN is None:
+    raise ValueError("DISCORD_BOT_TOKENが設定されていません。")
+
+
 # インテントの定義
 intents = discord.Intents.default()
 intents.guilds = True
