@@ -30,6 +30,9 @@ selected_members_last_round = {}
 # サーバーごとの最後にselectコマンドが実行された時間を保持する辞書
 last_select_time = {}
 
+# サーバーごとの優先参加者のIDを保持する辞書
+priority_members = {}
+
 # コマンド1: ランダムに2チームに分ける
 @bot.tree.command(name="team", description="Leagueチャンネルのメンバーをランダムに2チームに分けます。")
 async def team(interaction: discord.Interaction):
@@ -60,10 +63,10 @@ async def team(interaction: discord.Interaction):
 
     await interaction.followup.send(embed=embed)
 
-# コマンド2: 指定人数のメンバーを選ぶ（前回選ばれたメンバーを除外）
+# コマンド2: 指定人数のメンバーを選ぶ（前回選ばれたメンバーと優先参加者以外を除外）
 @bot.tree.command(name="select", description="Leagueチャンネルから指定した人数のメンバーを選びます。")
-@app_commands.describe(count="選ぶ人数")
-async def select(interaction: discord.Interaction, count: int):
+@app_commands.describe(count="選ぶ人数", role="選ばれたメンバーに付与するロール（オプション）")
+async def select(interaction: discord.Interaction, count: int, role: discord.Role = None):
     global selected_members_last_round, last_select_time
     await interaction.response.defer()
 
@@ -84,19 +87,38 @@ async def select(interaction: discord.Interaction, count: int):
         last_select_time[guild_id] = datetime.utcnow()
 
     last_selected = selected_members_last_round[guild_id]
+    priority = priority_members.get(guild_id, set())
 
-    eligible_members = [m for m in members if m.id not in last_selected]
+    # 優先参加者が設定されている場合は、そのメンバーのみを対象とする
+    if priority:
+        eligible_members = [m for m in members if m.id in priority and m.id not in last_selected]
+        excluded_text = ", ".join([m.display_name for m in members if m.id not in priority])
+        if excluded_text:
+            await interaction.followup.send(f"優先参加者として除外されたメンバー: {excluded_text}")
+    else:
+        eligible_members = [m for m in members if m.id not in last_selected]
 
     if not eligible_members:
-        eligible_members = members
-        await interaction.followup.send("全メンバーを再度対象とします。")
+        if priority:
+            eligible_members = [m for m in members if m.id in priority]
+            await interaction.followup.send("全優先参加者を再度対象とします。")
+        else:
+            eligible_members = members
+            await interaction.followup.send("全メンバーを再度対象とします。")
 
     if len(eligible_members) >= count:
         selected = random.sample(eligible_members, count)
     else:
         remaining_count = count - len(eligible_members)
-        remaining_members = [m for m in members if m.id in last_selected]
-        selected = eligible_members + random.sample(remaining_members, remaining_count)
+        if priority:
+            # 優先参加者のみが対象の場合、追加選択は不要
+            selected = eligible_members
+        else:
+            remaining_members = [m for m in members if m.id in last_selected]
+            if len(remaining_members) < remaining_count:
+                await interaction.followup.send("選択可能なメンバーが不足しています。")
+                return
+            selected = eligible_members + random.sample(remaining_members, remaining_count)
 
     selected_members_last_round[guild_id] = set(m.id for m in selected)
     last_select_time[guild_id] = datetime.utcnow()
@@ -107,38 +129,102 @@ async def select(interaction: discord.Interaction, count: int):
 
     await interaction.followup.send(embed=embed)
 
-# コマンド3: LoLのロールを割り当てる
+    # ロールの付与処理
+    if role:
+        success_members = []
+        failed_members = []
+        for member in selected:
+            try:
+                await member.add_roles(role)
+                success_members.append(member.display_name)
+            except discord.Forbidden:
+                failed_members.append(f"{member.display_name} にロールを付与する権限がありません。")
+            except Exception as e:
+                failed_members.append(f"{member.display_name} にロールを付与中にエラーが発生しました: {e}")
+
+        if success_members:
+            success_text = ", ".join(success_members)
+            await interaction.followup.send(f"選ばれたメンバーにロール **{role.name}** を付与しました: {success_text}")
+        if failed_members:
+            for msg in failed_members:
+                await interaction.followup.send(msg, ephemeral=True)
+
+# コマンド3: LoLのロールを割り当てる（部分一致によるメンバー指定）
 @bot.tree.command(name="role", description="LeagueチャンネルのメンバーにLoLのロールを割り当てます。")
-@app_commands.describe(roles="カンマ区切りのLoLロール（例：TOP,JG,MID,ADC,SUP）。指定がない場合はすべてのロールから割り当て")
-async def role(interaction: discord.Interaction, roles: str = None):
+@app_commands.describe(
+    roles="カンマ区切りのLoLロール（例：TOP,JG,MID,ADC,SUP）。指定がない場合はすべてのロールから割り当てます。",
+    members="ロールを割り当てるメンバー名の一部（部分一致）。指定がない場合は全メンバーに割り当てます。"
+)
+async def assign_role(interaction: discord.Interaction, roles: str = None, members: str = None):
     await interaction.response.defer()
 
-    members = interaction.user.voice.channel.members if interaction.user.voice and interaction.user.voice.channel else []
+    members_in_channel = interaction.user.voice.channel.members if interaction.user.voice and interaction.user.voice.channel else []
 
     if interaction.user.voice and interaction.user.voice.channel and interaction.user.voice.channel.name != "League":
         await interaction.followup.send("このコマンドは「League」チャンネルでのみ使用できます。")
         return
 
-    if len(members) > 5:
-        await interaction.followup.send("このコマンドは5人以下のメンバーでのみ使用できます。現在のメンバー数は {} 人です。".format(len(members)))
+    if not members_in_channel:
+        await interaction.followup.send("「League」チャンネルにメンバーがいません。")
         return
 
+    if len(members_in_channel) > 5:
+        await interaction.followup.send(f"このコマンドは5人以下のメンバーでのみ使用できます。現在のメンバー数は {len(members_in_channel)} 人です。")
+        return
+
+    if members:
+        # 部分一致でメンバーをフィルタリング
+        search_term = members.lower()
+        target_members = [m for m in members_in_channel if search_term in m.display_name.lower()]
+        if not target_members:
+            await interaction.followup.send(f"名前に「{members}」を含むメンバーが見つかりませんでした。")
+            return
+    else:
+        target_members = members_in_channel
+
     if not roles:
-        roles_list = LOL_ROLES[:len(members)]
+        roles_list = LOL_ROLES[:len(target_members)]
     else:
         roles_list = [role.strip().upper() for role in roles.split(",")]
 
-    if len(roles_list) != len(members):
-        await interaction.followup.send(f"提供されたロール数（{len(roles_list)}）がメンバー数（{len(members)}）と一致しません。")
+    if len(roles_list) != len(target_members):
+        await interaction.followup.send(f"提供されたロール数（{len(roles_list)}）がメンバー数（{len(target_members)}）と一致しません。")
         return
 
-    random.shuffle(roles_list)
+    # 実際のロールオブジェクトを取得
+    guild_roles = interaction.guild.roles
+    assigned_roles = []
+    for role_name in roles_list:
+        matched_roles = [r for r in guild_roles if r.name.upper() == role_name]
+        if not matched_roles:
+            await interaction.followup.send(f"ロール「{role_name}」が見つかりませんでした。")
+            return
+        assigned_roles.append(matched_roles[0])
+
+    random.shuffle(assigned_roles)
 
     embed = discord.Embed(title="LoLロールの割り当て", color=discord.Color.purple())
-    for member, role_name in zip(members, roles_list):
-        embed.add_field(name=member.display_name, value=role_name, inline=False)
+    success_members = []
+    failed_members = []
+
+    for member, role_obj in zip(target_members, assigned_roles):
+        try:
+            await member.add_roles(role_obj)
+            embed.add_field(name=member.display_name, value=role_obj.name, inline=False)
+            success_members.append(member.display_name)
+        except discord.Forbidden:
+            failed_members.append(f"{member.display_name} にロールを付与する権限がありません。")
+        except Exception as e:
+            failed_members.append(f"{member.display_name} にロールを付与中にエラーが発生しました: {e}")
 
     await interaction.followup.send(embed=embed)
+
+    if success_members:
+        success_text = ", ".join(success_members)
+        await interaction.followup.send(f"選ばれたメンバーにロールを割り当てました: {success_text}")
+    if failed_members:
+        for msg in failed_members:
+            await interaction.followup.send(msg, ephemeral=True)
 
 # コマンド4: 選択履歴をリセットする（全ユーザー用）
 @bot.tree.command(name="reset_selection", description="選択履歴をリセットします。")
@@ -154,6 +240,52 @@ async def reset_selection(interaction: discord.Interaction):
         del last_select_time[guild_id]
 
     await interaction.followup.send("選択履歴をリセットしました。", ephemeral=True)
+
+# 新規コマンド: 優先参加者リストを設定する
+@bot.tree.command(name="list", description="優先参加者を設定します。指定されたメンバー以外を選択から除外します。")
+@app_commands.describe(members="優先参加者の名前をカンマ区切りで指定します。例: 優先参加者1, 優先参加者2")
+async def set_priority_list(interaction: discord.Interaction, members: str):
+    guild_id = interaction.guild.id
+    await interaction.response.defer()
+
+    voice_channel = interaction.user.voice.channel if interaction.user.voice and interaction.user.voice.channel else None
+
+    if not voice_channel:
+        await interaction.followup.send("ボイスチャンネルに接続している必要があります。")
+        return
+
+    if voice_channel.name != "League":
+        await interaction.followup.send("このコマンドは「League」チャンネルでのみ使用できます。")
+        return
+
+    member_names = [name.strip().lower() for name in members.split(",")]
+    current_members = voice_channel.members
+
+    matched_members = []
+    not_found = []
+
+    for name in member_names:
+        # 部分一致でメンバーを検索
+        matches = [m for m in current_members if name in m.display_name.lower()]
+        if matches:
+            # もし複数一致した場合、すべてを優先参加者として追加
+            matched_members.extend(matches)
+        else:
+            not_found.append(name)
+
+    if not matched_members:
+        await interaction.followup.send("指定された優先参加者が見つかりませんでした。")
+        return
+
+    priority_members[guild_id] = set(m.id for m in matched_members)
+
+    success_text = ", ".join([m.display_name for m in matched_members])
+
+    if not_found:
+        not_found_text = ", ".join(not_found)
+        await interaction.followup.send(f"以下の名前のメンバーが見つかりませんでした: {not_found_text}")
+
+    await interaction.followup.send(f"優先参加者として以下のメンバーを設定しました: {success_text}")
 
 # 背景タスク: 1.5時間の非操作後に選択履歴をリセット
 @tasks.loop(minutes=5)
