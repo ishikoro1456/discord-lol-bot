@@ -155,7 +155,7 @@ async def assign_role(interaction: discord.Interaction, roles: str = None, membe
         return
 
     if len(members_in_channel) > 5:
-        await interaction.followup.send(f"このコマンドは5人以下のメンバーでのみ使用できます。現在のメンバー数は {len(members_in_channel)} 人です。\n :bulb: members引数を用いて指定してください。")
+        await interaction.followup.send(f"このコマンドは5人以下のメンバーでのみ使用できます。現在のメンバー数は {len(members_in_channel)} 人です。\n -# :bulb: members引数を用いて指定してください。")
         return
 
     if members:
