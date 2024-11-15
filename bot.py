@@ -190,9 +190,6 @@ async def assign_role(interaction: discord.Interaction, roles: str = None, membe
 
     await interaction.followup.send(embed=embed)
 
-    if success_assignments:
-        success_text = "\n".join(success_assignments)
-        await interaction.followup.send(f"以下のメンバーにロールを割り当てました:\n{success_text}")
 
 
 # コマンド4: 選択履歴をリセットする（全ユーザー用）
