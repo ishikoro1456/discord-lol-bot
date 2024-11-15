@@ -211,7 +211,7 @@ async def reset_selection(interaction: discord.Interaction):
     await interaction.followup.send("選択履歴をリセットしました。", ephemeral=True)
 
 # 新規コマンド: 優先参加者リストを設定する
-@bot.tree.command(name="list", description="優先参加者を設定します。指定されたメンバー以外を選択から除外します。")
+@bot.tree.command(name="set_list", description="優先参加者を設定します。指定されたメンバー以外を選択から除外します。")
 @app_commands.describe(members="優先参加者の名前をカンマ区切りで指定します。例: 優先参加者1, 優先参加者2")
 async def set_priority_list(interaction: discord.Interaction, members: str):
     guild_id = interaction.guild.id
