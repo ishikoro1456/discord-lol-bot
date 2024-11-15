@@ -131,23 +131,9 @@ async def select(interaction: discord.Interaction, count: int, role: discord.Rol
 
     # ロールの付与処理
     if role:
-        success_members = []
-        failed_members = []
-        for member in selected:
-            try:
-                await member.add_roles(role)
-                success_members.append(member.display_name)
-            except discord.Forbidden:
-                failed_members.append(f"{member.display_name} にロールを付与する権限がありません。")
-            except Exception as e:
-                failed_members.append(f"{member.display_name} にロールを付与中にエラーが発生しました: {e}")
-
-        if success_members:
-            success_text = ", ".join(success_members)
-            await interaction.followup.send(f"選ばれたメンバーにロール **{role.name}** を付与しました: {success_text}")
-        if failed_members:
-            for msg in failed_members:
-                await interaction.followup.send(msg, ephemeral=True)
+        # ここでは実際のロールを付与せず、選ばれたメンバーに指定されたロール名を表示するだけにします
+        success_text = ", ".join([f"{m.display_name}: **{role.name}**" for m in selected])
+        await interaction.followup.send(f"選ばれたメンバーにロール **{role.name}** を割り当てました:\n{success_text}")
 
 # コマンド3: LoLのロールを割り当てる（部分一致によるメンバー指定）
 @bot.tree.command(name="role", description="LeagueチャンネルのメンバーにLoLのロールを割り当てます。")
@@ -191,40 +177,23 @@ async def assign_role(interaction: discord.Interaction, roles: str = None, membe
         await interaction.followup.send(f"提供されたロール数（{len(roles_list)}）がメンバー数（{len(target_members)}）と一致しません。")
         return
 
-    # 実際のロールオブジェクトを取得
-    guild_roles = interaction.guild.roles
-    assigned_roles = []
-    for role_name in roles_list:
-        matched_roles = [r for r in guild_roles if r.name.upper() == role_name]
-        if not matched_roles:
-            await interaction.followup.send(f"ロール「{role_name}」が見つかりませんでした。")
-            return
-        assigned_roles.append(matched_roles[0])
-
-    random.shuffle(assigned_roles)
+    # ロールをランダムに割り当て
+    assigned_roles = random.sample(roles_list, len(target_members)) if len(roles_list) >= len(target_members) else roles_list
 
     embed = discord.Embed(title="LoLロールの割り当て", color=discord.Color.purple())
-    success_members = []
-    failed_members = []
+    success_assignments = []
+    failed_assignments = []
 
-    for member, role_obj in zip(target_members, assigned_roles):
-        try:
-            await member.add_roles(role_obj)
-            embed.add_field(name=member.display_name, value=role_obj.name, inline=False)
-            success_members.append(member.display_name)
-        except discord.Forbidden:
-            failed_members.append(f"{member.display_name} にロールを付与する権限がありません。")
-        except Exception as e:
-            failed_members.append(f"{member.display_name} にロールを付与中にエラーが発生しました: {e}")
+    for member, role_name in zip(target_members, assigned_roles):
+        embed.add_field(name=member.display_name, value=role_name, inline=False)
+        success_assignments.append(f"{member.display_name}: **{role_name}**")
 
     await interaction.followup.send(embed=embed)
 
-    if success_members:
-        success_text = ", ".join(success_members)
-        await interaction.followup.send(f"選ばれたメンバーにロールを割り当てました: {success_text}")
-    if failed_members:
-        for msg in failed_members:
-            await interaction.followup.send(msg, ephemeral=True)
+    if success_assignments:
+        success_text = "\n".join(success_assignments)
+        await interaction.followup.send(f"以下のメンバーにロールを割り当てました:\n{success_text}")
+
 
 # コマンド4: 選択履歴をリセットする（全ユーザー用）
 @bot.tree.command(name="reset_selection", description="選択履歴をリセットします。")
