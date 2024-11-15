@@ -79,7 +79,7 @@ async def select(interaction: discord.Interaction, count: int, role: discord.Rol
         return
 
     if count > len(members):
-        await interaction.followup.send(f"{count}人を選ぶことはできません。現在のメンバー数は {len(members)} 人です。")
+        await interaction.followup.send(f"{count}人を選ぶことはできません。現在のメンバー数は {len(members)} 人です。\n :bulb: member引数を用いてください。")
         return
 
     if guild_id not in selected_members_last_round:
