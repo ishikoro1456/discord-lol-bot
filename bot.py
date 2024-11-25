@@ -1,49 +1,136 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import random
 import os
-from datetime import datetime, timedelta
+from flask import Flask
+from threading import Thread
 
 TOKEN = os.getenv('TOKEN')
 
 if TOKEN is None:
     raise ValueError("DISCORD_BOT_TOKENが設定されていません。")
 
-
 # インテントの定義
 intents = discord.Intents.default()
 intents.guilds = True
 intents.voice_states = True
 intents.members = True
-intents.message_content = True  # 必要に応じてTrueに設定
+intents.message_content = True 
 
 # ボットの初期化
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# LoLのロール定義
-LOL_ROLES = ["TOP", "JG", "MID", "ADC", "SUP"]
+# ロールの定義
+ROLES = ["TOP", "JG", "MID", "ADC", "SUP"]
 
-# サーバーごとの前回選ばれたメンバーのIDを保持する辞書
-selected_members_last_round = {}
+def get_league_members(guild):
+    """Leagueという名前のボイスチャンネルに接続しているメンバーを取得"""
+    league_channel = discord.utils.get(guild.voice_channels, name="League")
+    if league_channel:
+        return league_channel.members
+    return []
 
-# サーバーごとの最後にselectコマンドが実行された時間を保持する辞書
-last_select_time = {}
+def search_members(members, query):
+    """メンバー名を部分一致で検索"""
+    if not query:
+        return members
+    return [member for member in members if query.lower() in member.display_name.lower()]
 
-# サーバーごとの優先参加者のIDを保持する辞書
-priority_members = {}
+@bot.tree.command(name="select", description="Leagueチャンネルのメンバーから指定数を除外して選択します。")
+@app_commands.describe(
+    exclude_num="除外する人数（必須）",
+    member_name="部分一致で検索するメンバー名（省略可）"
+)
+async def select(interaction: discord.Interaction, exclude_num: int, member_name: str = None):
+    """
+    `exclude_num` を必須引数として設定。
+    Discordのスラッシュコマンドではデフォルト値を設定しないことで引数を必須にします。
+    """
+    await interaction.response.defer()
 
-# コマンド1: ランダムに2チームに分ける
+    all_members = get_league_members(interaction.guild)
+    selected_members = search_members(all_members, member_name)
+
+    if exclude_num >= len(selected_members):
+        await interaction.followup.send("除外する人数がメンバー数以上です。")
+        return
+
+    final_members = random.sample(selected_members, len(selected_members) - exclude_num)
+    member_names = ', '.join([member.display_name for member in final_members])
+    await interaction.followup.send(f"選ばれたメンバー: {member_names}")
+
+@bot.tree.command(name="role", description="Leagueチャンネルのメンバーにロールを割り当てます。")
+@app_commands.describe(
+    member_name="部分一致で検索するメンバー名（省略可）",
+    role="割り当てるロール（複数可、カンマ区切り）"
+)
+async def assign_role(interaction: discord.Interaction, member_name: str = None, role: str = None):
+    await interaction.response.defer()
+
+    all_members = get_league_members(interaction.guild)
+    selected_members = search_members(all_members, member_name)
+
+    num_members = len(selected_members)
+
+    if num_members == 0:
+        await interaction.followup.send("Leagueチャンネルに接続しているメンバーがいません。")
+        return
+
+    roles_assigned = {}
+
+    if not role:
+        # ロールが指定されていない場合、メンバー数に応じて自動割り当て
+        if num_members <= 3:
+            available_roles = ["TOP", "JG", "MID"]
+            if num_members > len(available_roles):
+                await interaction.followup.send("メンバー数がロールの数を超えています。重複なしで割り当てることができません。")
+                return
+            random.shuffle(available_roles)
+            for member, assigned_role in zip(selected_members, available_roles):
+                roles_assigned[member.display_name] = assigned_role
+        elif num_members == 4:
+            adc_sup = random.choice(["ADC", "SUP"])
+            available_roles = ["TOP", "JG", "MID"]
+            random.shuffle(available_roles)
+            roles_assigned[selected_members[0].display_name] = adc_sup
+            for member, assigned_role in zip(selected_members[1:], available_roles):
+                roles_assigned[member.display_name] = assigned_role
+        elif num_members == 5:
+            shuffled_roles = ROLES.copy()
+            random.shuffle(shuffled_roles)
+            for member, assigned_role in zip(selected_members, shuffled_roles):
+                roles_assigned[member.display_name] = assigned_role
+        else:
+            await interaction.followup.send("対応していないメンバー数です。")
+            return
+    else:
+        # ロールが指定されている場合、カンマ区切りで複数ロールを解析
+        input_roles = [r.strip().upper() for r in role.split(',')]
+        unique_roles = list(dict.fromkeys(input_roles))  # 重複を除去
+
+        if len(unique_roles) < num_members:
+            await interaction.followup.send("指定されたロールの数がメンバー数に足りません。")
+            return
+
+        random.shuffle(unique_roles)
+        for member, assigned_role in zip(selected_members, unique_roles):
+            roles_assigned[member.display_name] = assigned_role
+
+    # 結果をフォーマットして送信
+    role_messages = [f"{name}: {role}" for name, role in roles_assigned.items()]
+    await interaction.followup.send("\n".join(role_messages))
+
 @bot.tree.command(name="team", description="Leagueチャンネルのメンバーをランダムに2チームに分けます。")
 async def team(interaction: discord.Interaction):
     await interaction.response.defer()
 
-    # ボイスチャンネルのメンバーを取得
-    members = interaction.user.voice.channel.members if interaction.user.voice and interaction.user.voice.channel else []
-
-    if not interaction.user.voice or not interaction.user.voice.channel or interaction.user.voice.channel.name != "League":
-        await interaction.followup.send("LeagueチャンネルのVCに入り、そこからコマンドを使用してください。")
+    user_voice = interaction.user.voice
+    if not user_voice or not user_voice.channel:
+        await interaction.followup.send("あなたはボイスチャンネルに参加していません。")
         return
+
+    members = get_league_members(interaction.guild)
 
     if len(members) < 2:
         await interaction.followup.send("チームに分けるには、2人以上のメンバーが必要です。")
@@ -63,107 +150,15 @@ async def team(interaction: discord.Interaction):
 
     await interaction.followup.send(embed=embed)
 
-# コマンドの新規実装: ロール割り当て
-@bot.tree.command(name="role", description="Leagueチャンネルにいる人にLoLロールを割り当てます。")
-async def role(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    members_in_channel = interaction.user.voice.channel.members if interaction.user.voice and interaction.user.voice.channel else []
-
-    if not interaction.user.voice or not interaction.user.voice.channel or interaction.user.voice.channel.name != "League":
-        await interaction.followup.send("LeagueチャンネルのVCに入り、そこからコマンドを使用してください。")
-        return
-
-    if not members_in_channel:
-        await interaction.followup.send("現在Leagueチャンネルに人がいません。")
-        return
-
-    # セレクトメニュー作成
-    options = [
-        discord.SelectOption(label=member.display_name, value=str(member.id))
-        for member in members_in_channel
-    ]
-
-    select_menu = discord.ui.Select(placeholder="割り当たいたいメンバーを選択", options=options)
-
-    async def select_callback(interaction: discord.Interaction):
-        selected_ids = select_menu.values
-        selected_members = [member for member in members_in_channel if str(member.id) in selected_ids]
-
-        if len(selected_members) > 5:
-            await interaction.response.send_message("5人までしか選択できません。", ephemeral=True)
-            return
-
-        # 割り当て
-        assigned_roles = random.sample(LOL_ROLES, len(selected_members))
-        role_assignment = "\n".join([f"{member.display_name}: {role}" for member, role in zip(selected_members, assigned_roles)])
-
-        embed = discord.Embed(title="LoLロール割り当て", color=discord.Color.purple())
-        embed.add_field(name="割り当て結果", value=role_assignment, inline=False)
-
-        await interaction.response.send_message(embed=embed)
-
-    select_menu.callback = select_callback
-    view = discord.ui.View()
-    view.add_item(select_menu)
-
-    await interaction.followup.send("Leagueチャンネルの人を選択してください。", view=view)
-
-# set_listコマンドの更新
-@bot.tree.command(name="set_list", description="優先参加者を設定します。前の設定を上書きします。")
-@app_commands.describe(members="優先参加者の名前をカンマ区切りで指定します。例: 優先参加者1, 優先参加者2")
-async def set_priority_list(interaction: discord.Interaction, members: str):
-    guild_id = interaction.guild.id
-    await interaction.response.defer()
-
-    voice_channel = interaction.user.voice.channel if interaction.user.voice and interaction.user.voice.channel else None
-
-    if not voice_channel:
-        await interaction.followup.send("ボイスチャンネルに接続している必要があります。")
-        return
-
-    if voice_channel.name != "League":
-        await interaction.followup.send("このコマンドは「League」チャンネルでのみ使用可能です。")
-        return
-
-    member_names = [name.strip().lower() for name in members.split(",")]
-    current_members = voice_channel.members
-
-    matched_members = []
-    not_found = []
-
-    for name in member_names:
-        # 部分一致でメンバーを検索
-        matches = [m for m in current_members if name in m.display_name.lower()]
-        if matches:
-            matched_members.extend(matches)
-        else:
-            not_found.append(name)
-
-    if not matched_members:
-        await interaction.followup.send("指定された優先参加者が見つかりませんでした。")
-        return
-
-    priority_members[guild_id] = set(m.id for m in matched_members)
-
-    success_text = ", ".join([m.display_name for m in matched_members])
-
-    if not_found:
-        not_found_text = ", ".join(not_found)
-        await interaction.followup.send(f"以下の名前のメンバーが見つかりませんでした: {not_found_text}")
-
-    await interaction.followup.send(f"優先参加者として以下のメンバーを設定しました: {success_text}")
-
 @bot.event
-def on_ready():
+async def on_ready():
     print(f'ログインしました: {bot.user}')
-    auto_reset_selection.start()
+    try:
+        synced = await bot.tree.sync()
+        print(f"同期したコマンド数: {len(synced)}")
+    except Exception as e:
+        print(f"コマンドの同期中にエラーが発生しました: {e}")
 
-bot.run(TOKEN)
-
-from flask import Flask
-from threading import Thread
-import os
 
 app = Flask('')
 
@@ -176,3 +171,5 @@ def run():
     app.run(host='0.0.0.0', port=port)
 
 Thread(target=run).start()
+
+bot.run(TOKEN)
