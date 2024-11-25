@@ -25,7 +25,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 ROLES = ["TOP", "JG", "MID", "ADC", "SUP"]
 
 def get_league_members(guild):
-    """Leagueという名前のボイスチャンネルに接続しているメンバーを取得"""
+    """Leagueチャンネルに接続しているメンバーを取得"""
     league_channel = discord.utils.get(guild.voice_channels, name="League")
     if league_channel:
         return league_channel.members
@@ -37,15 +37,14 @@ def search_members(members, query):
         return members
     return [member for member in members if query.lower() in member.display_name.lower()]
 
-@bot.tree.command(name="select", description="Leagueチャンネルのメンバーから指定数を除外して選択します。")
+@bot.tree.command(name="select", description="指定された人数を選択します")
 @app_commands.describe(
-    exclude_num="除外する人数（必須）",
-    member_name="部分一致で検索するメンバー名（省略可）"
+    exclude_num="除外する人数（数字、必須項目）",
+    member_name="メンバー名（部分一致、省略可）"
 )
 async def select(interaction: discord.Interaction, exclude_num: int, member_name: str = None):
     """
     `exclude_num` を必須引数として設定。
-    Discordのスラッシュコマンドではデフォルト値を設定しないことで引数を必須にします。
     """
     await interaction.response.defer()
 
@@ -60,10 +59,10 @@ async def select(interaction: discord.Interaction, exclude_num: int, member_name
     member_names = ', '.join([member.display_name for member in final_members])
     await interaction.followup.send(f"選ばれたメンバー: {member_names}")
 
-@bot.tree.command(name="role", description="Leagueチャンネルのメンバーにロールを割り当てます。")
+@bot.tree.command(name="role", description="LoLのロール割り当て")
 @app_commands.describe(
-    member_name="部分一致で検索するメンバー名（省略可）",
-    role="割り当てるロール（複数可、カンマ区切り）"
+    member_name="メンバー名（部分一致、カンマ区切り）",
+    role="ロール（部分一致、カンマ区切り）"
 )
 async def assign_role(interaction: discord.Interaction, member_name: str = None, role: str = None):
     await interaction.response.defer()
@@ -124,11 +123,6 @@ async def assign_role(interaction: discord.Interaction, member_name: str = None,
 @bot.tree.command(name="team", description="Leagueチャンネルのメンバーをランダムに2チームに分けます。")
 async def team(interaction: discord.Interaction):
     await interaction.response.defer()
-
-    user_voice = interaction.user.voice
-    if not user_voice or not user_voice.channel:
-        await interaction.followup.send("あなたはボイスチャンネルに参加していません。")
-        return
 
     members = get_league_members(interaction.guild)
 
