@@ -43,21 +43,25 @@ def search_members(members, query):
     member_name="メンバー名（部分一致、省略可）"
 )
 async def select(interaction: discord.Interaction, exclude_num: int, member_name: str = None):
-    """
-    `exclude_num` を必須引数として設定。
-    """
     await interaction.response.defer()
 
     all_members = get_league_members(interaction.guild)
     selected_members = search_members(all_members, member_name)
 
     if exclude_num >= len(selected_members):
-        await interaction.followup.send("除外する人数がメンバー数以上です。")
+        await interaction.followup.send("❌ **エラー**: 除外する人数がメンバー数以上です。")
         return
 
     final_members = random.sample(selected_members, len(selected_members) - exclude_num)
-    member_names = ', '.join([member.display_name for member in final_members])
-    await interaction.followup.send(f"選ばれたメンバー: {member_names}")
+    member_names = '\n'.join([f"- {member.display_name}" for member in final_members])
+
+    embed = discord.Embed(
+        title="🎯 選ばれたメンバー",
+        description=member_names,
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"除外人数: {exclude_num} | 検索クエリ: {member_name or 'なし'}")
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="role", description="LoLのロール割り当て")
 @app_commands.describe(
@@ -73,17 +77,17 @@ async def assign_role(interaction: discord.Interaction, member_name: str = None,
     num_members = len(selected_members)
 
     if num_members == 0:
-        await interaction.followup.send("Leagueチャンネルに接続しているメンバーがいません。")
+        await interaction.followup.send("❌ **エラー**: Leagueチャンネルに接続しているメンバーがいません。")
         return
 
     roles_assigned = {}
 
     if not role:
-        # ロールが指定されていない場合、メンバー数に応じて自動割り当て
+        # ロールが指定されていない場合
         if num_members <= 3:
             available_roles = ["TOP", "JG", "MID"]
             if num_members > len(available_roles):
-                await interaction.followup.send("メンバー数がロールの数を超えています。重複なしで割り当てることができません。")
+                await interaction.followup.send("❌ **エラー**: メンバー数がロールの数を超えています。重複なしで割り当てることができません。")
                 return
             random.shuffle(available_roles)
             for member, assigned_role in zip(selected_members, available_roles):
@@ -101,15 +105,15 @@ async def assign_role(interaction: discord.Interaction, member_name: str = None,
             for member, assigned_role in zip(selected_members, shuffled_roles):
                 roles_assigned[member.display_name] = assigned_role
         else:
-            await interaction.followup.send("対応していないメンバー数です。")
+            await interaction.followup.send("❌ **エラー**: 対応していないメンバー数です。")
             return
     else:
-        # ロールが指定されている場合、カンマ区切りで複数ロールを解析
+        # ロールが指定されている場合
         input_roles = [r.strip().upper() for r in role.split(',')]
-        unique_roles = list(dict.fromkeys(input_roles))  # 重複を除去
+        unique_roles = list(dict.fromkeys(input_roles))
 
         if len(unique_roles) < num_members:
-            await interaction.followup.send("指定されたロールの数がメンバー数に足りません。")
+            await interaction.followup.send("❌ **エラー**: 指定されたロールの数がメンバー数に足りません。")
             return
 
         random.shuffle(unique_roles)
@@ -117,8 +121,13 @@ async def assign_role(interaction: discord.Interaction, member_name: str = None,
             roles_assigned[member.display_name] = assigned_role
 
     # 結果をフォーマットして送信
-    role_messages = [f"{name}: {role}" for name, role in roles_assigned.items()]
-    await interaction.followup.send("\n".join(role_messages))
+    role_messages = '\n'.join([f"- **{name}**: {role}" for name, role in roles_assigned.items()])
+    embed = discord.Embed(
+        title="📜 ロール割り当て結果",
+        description=role_messages,
+        color=discord.Color.blue()
+    )
+    await interaction.followup.send(embed=embed)
 
 @bot.tree.command(name="team", description="Leagueチャンネルのメンバーをランダムに2チームに分けます。")
 async def team(interaction: discord.Interaction):
@@ -127,7 +136,7 @@ async def team(interaction: discord.Interaction):
     members = get_league_members(interaction.guild)
 
     if len(members) < 2:
-        await interaction.followup.send("チームに分けるには、2人以上のメンバーが必要です。")
+        await interaction.followup.send("❌ **エラー**: チームに分けるには、2人以上のメンバーが必要です。")
         return
 
     random.shuffle(members)
@@ -135,23 +144,26 @@ async def team(interaction: discord.Interaction):
     team1 = members[:midpoint]
     team2 = members[midpoint:]
 
-    team1_names = ", ".join([m.display_name for m in team1])
-    team2_names = ", ".join([m.display_name for m in team2])
+    team1_names = "\n".join([f"- {m.display_name}" for m in team1])
+    team2_names = "\n".join([f"- {m.display_name}" for m in team2])
 
-    embed = discord.Embed(title="チーム分け", color=discord.Color.blue())
-    embed.add_field(name="チーム1", value=team1_names, inline=False)
-    embed.add_field(name="チーム2", value=team2_names, inline=False)
+    embed = discord.Embed(
+        title="⚔️ チーム分け結果",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="**チーム1**", value=team1_names, inline=False)
+    embed.add_field(name="**チーム2**", value=team2_names, inline=False)
 
     await interaction.followup.send(embed=embed)
 
 @bot.event
 async def on_ready():
-    print(f'ログインしました: {bot.user}')
+    print(f'✅ ログインしました: {bot.user}')
     try:
         synced = await bot.tree.sync()
-        print(f"同期したコマンド数: {len(synced)}")
+        print(f"✅ 同期したコマンド数: {len(synced)}")
     except Exception as e:
-        print(f"コマンドの同期中にエラーが発生しました: {e}")
+        print(f"❌ コマンドの同期中にエラーが発生しました: {e}")
 
 
 app = Flask('')
